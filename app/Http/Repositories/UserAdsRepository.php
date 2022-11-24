@@ -277,50 +277,71 @@ class UserAdsRepository
         return $user;
     }
 
-    public function createAds($user_code, $thisData)
+      public function createAds($user_code, $thisData)
     {
         $cartCounts = (int) $thisData['ads_cart_count'];
 
         DB::beginTransaction();
         try {
 
-            $ads_cart_order = DB::table('ads_cart_order')->insert(
-                            [
-                            'ads_cart_order_code' => $thisData['ads_cart_order_code'],
-                            'ads_cart_order_invoice' => generateFiledCode('INV'),
-                            'ads_cart_order_grand_total' => calculateTotalPriceAds($cartCounts),
-                            'ads_cart_order_date_created' => Carbon::now(),
-                            'ads_cart_order_payment_status' => 0
-                            ]
-                        );
+            if ($thisData['order_code_available'] == 'NOT_AVAILABLE') {
+                $ads_cart_order = DB::table('ads_cart_order')
+                    ->insert([
+                        'ads_cart_order_code' => $thisData['ads_cart_order_code'],
+                        'ads_cart_order_invoice' => generateFiledCode('INV'),
+                        'ads_cart_order_grand_total' => $thisData['ads_cart_amount'],
+                        'ads_cart_order_payment_status' => 0, //STATUS UNPAID
+                        'ads_cart_order_date_created' => Carbon::now()
+                    ]);
+            } else {
+                $ads_cart_order = DB::table('ads_cart_order')
+                    ->where('ads_cart_order_code', $thisData['ads_cart_order_code'])
+                    ->update([
+                        'ads_cart_order_date_updated' => Carbon::now(),
+                        'ads_cart_order_grand_total' => $this->getTotalHargaForUpdate($thisData['ads_cart_order_code'], $cartCounts, $thisData['package_code'])
+                    ]);
+            }
 
             for ($i = 1; $i < $cartCounts+1; $i++) {
-                $ads_cart[$i] = DB::table('ads_cart')->insert(
-                            [
-                                'users_code' => $user_code,
-                                'ads_cart_name' => $thisData['ads_cart_name'],
-                                'ads_cart_code' => generateFiledCode('CART'),
-                                'ads_cart_start_date' => $thisData['ads_cart_start_date'],
-                                'ads_cart_end_date' => $thisData['ads_cart_end_date'],
-                                'product_code' => $thisData['product_code'],
-                                'product_type' => $thisData['product_type'],
-                                'product_car_code' => $thisData['product_car_code'],
-                                'product_car_loc_code' => $thisData['product_car_loc_code'],
-                                'ads_cart_order_code' => $thisData['ads_cart_order_code'],
-                                'ads_cart_url' => $thisData['ads_cart_url'],
-                                'ads_cart_status' => 0,
-                                'ads_cart_amount' => 10000000
-                            ]
-                        );
-
+                $ads_cart[$i] = DB::table('ads_cart')
+                    ->insert([
+                        'users_code' => $user_code,
+                        'ads_cart_name' => $thisData['ads_cart_name'],
+                        'ads_cart_code' => generateFiledCode('CART'),
+                        'ads_cart_uuid' => $thisData['ads_cart_uuid'],
+                        'price_list_code' => $thisData['package_code'],
+                        'ads_cart_quantity' => $thisData['ads_cart_count'],
+                        'product_code' => $thisData['product_code'],
+                        'product_type' => $thisData['product_type'],
+                        'product_car_code' => $thisData['product_car_code'],
+                        'product_car_loc_code' => $thisData['product_car_loc_code'],
+                        'ads_cart_order_code' => $thisData['ads_cart_order_code'],
+                        'ads_cart_url' => $thisData['ads_cart_url'],
+                        'ads_cart_status' => 0, //STATUS ON-CART
+                        'ads_cart_amount' => $thisData['ads_cart_amount']
+                    ]);
             }
-            // dd($ads_cart);
+
+            $get_data_price = $this->getPricelistForTransactionV2($thisData['package_code']);
+
+            $add_transaction = DB::table('transaction')
+                ->insert([
+                    'transaction_code' => generateFiledCode('TRX'),
+                    'ads_cart_uuid' => $thisData['ads_cart_uuid'],
+                    'transaction_quantity' => $thisData['ads_cart_count'],
+                    'target' => @$get_data_price->target,
+                    'harga_user' => @$get_data_price->harga_user,
+                    'harga_partner' => @$get_data_price->harga_partner,
+                    'extends_user' => @$get_data_price->extends_user,
+                    'extends_partner' => @$get_data_price->extends_partner,
+                    'create_at' => Carbon::now()
+                ]);
 
             DB::commit();
 
         } catch (\Exception $ex) {
             DB::rollBack();
-            logger('createAds(): catch ->', ['user' => $user_code, 'Exception' => $ex]);
+            logger('createAds(): catch ->', ['user' => $user_code, 'Exception' => $ex->getMessage()]);
             return false;
         }
 
